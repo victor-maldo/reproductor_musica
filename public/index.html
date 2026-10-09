@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Spotify</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Iconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Panel Lateral -->
+        <aside class="sidebar">
+            <h2><i class="fa-brands fa-spotify"></i> Mini Spotify</h2>
+            <nav>
+                <button onclick="mostrarVista('buscar')" class="nav-btn active"><i class="fa-solid fa-magnifying-glass"></i> Buscar</button>
+                <button onclick="mostrarVista('biblioteca')" class="nav-btn"><i class="fa-solid fa-book"></i> Tu Biblioteca</button>
+            </nav>
+
+            <!-- Monitor de Almacenamiento -->
+            <div class="storage-monitor" onclick="abrirCarpeta()" style="cursor: pointer;" title="Haz clic para abrir en el explorador de archivos">
+                <h4>Almacenamiento Local</h4>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="storage-fill"></div>
+                </div>
+                <p id="storage-text">Calculando...</p>
+                <p id="songs-count">0 canciones</p>
+            </div>
+        </aside>
+
+        <!-- Contenido Principal -->
+        <main class="main-content">
+            
+            <!-- Vista: Buscar -->
+            <section id="vista-buscar" class="vista active">
+                <div class="search-header">
+                    <input type="text" id="input-busqueda" placeholder="¿Qué quieres escuchar?">
+                    <button onclick="buscarCancion()"><i class="fa-solid fa-magnifying-glass"></i></button>
+                </div>
+                <div id="loading-search" style="display:none;">Buscando en la red...</div>
+                <div class="resultados-grid" id="resultados-busqueda">
+                    <!-- Los resultados aparecerán aquí -->
+                </div>
+            </section>
+
+            <!-- Vista: Biblioteca -->
+            <section id="vista-biblioteca" class="vista" style="display: none;">
+                <div class="search-header" style="justify-content: space-between;">
+                    <h2>Tu Música Descargada</h2>
+                    <input type="text" id="input-filtro" placeholder="Filtrar por canción o artista..." oninput="filtrarBiblioteca()" style="width: 250px;">
+                </div>
+                <div class="resultados-grid" id="lista-biblioteca">
+                    <!-- Las canciones guardadas aparecerán aquí -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Reproductor Inferior -->
+    <footer class="player-bar">
+        <div class="player-info">
+            <img id="player-cover" src="https://via.placeholder.com/60" alt="Portada">
+            <div class="player-text">
+                <h4 id="player-title">Ninguna canción</h4>
+                <p id="player-artist">-</p>
+            </div>
+        </div>
+        
+        <div class="player-center">
+            <div class="player-controls">
+                <button onclick="togglePlay()" id="btn-play"><i class="fa-solid fa-circle-play fa-2x"></i></button>
+                <audio id="audio-player" ontimeupdate="actualizarBarraTiempo()" onended="siguienteCancion()"></audio>
+            </div>
+            <div class="player-progress">
+                <span id="time-current">0:00</span>
+                <input type="range" id="progress-bar" value="0" min="0" max="100" onchange="saltarTiempo()">
+                <span id="time-total">0:00</span>
+            </div>
+        </div>
+
+        <div class="player-volume">
+            <i class="fa-solid fa-volume-high" id="icon-vol"></i>
+            <input type="range" id="volume-bar" value="100" min="0" max="100" oninput="cambiarVolumen()">
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
