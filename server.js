@@ -7,6 +7,8 @@ const axios = require('axios');
 const fsPromises = require('fs').promises; // Para calcular el tamaño de los directorios
 const ytSearch = require('yt-search');
 const { exec } = require('child_process');
+const fetch = require('isomorphic-unfetch');
+const { getTracks } = require('spotify-url-info')(fetch);
 
 const app = express();
 const PORT = 3000;
@@ -203,4 +205,67 @@ app.delete('/api/canciones/:id', (req, res) => {
             });
         });
     });
+});
+
+// --- RUTA 7: LEER PLAYLIST DE SPOTIFY (Con Respaldo de Apple Music) ---
+app.get('/api/spotify', async (req, res) => {
+    const url = req.query.url;
+    if (!url) return res.status(400).json({ error: 'Falta la URL de Spotify' });
+
+    try {
+        console.log(`Leyendo playlist de Spotify: ${url}`);
+        
+        // 1. Extraemos el texto básico de la playlist
+        const tracks = await getTracks(url);
+
+        // 2. Procesamos todas las canciones a la vez usando Promise.all
+        const canciones = await Promise.all(tracks.map(async (t) => {
+            
+            // --- CAZAMOS EL ARTISTA ---
+            let artistaFinal = 'Desconocido';
+            if (typeof t.artist === 'string') artistaFinal = t.artist;
+            else if (t.artists && Array.isArray(t.artists)) artistaFinal = t.artists.map(a => a.name).join(', ');
+            else if (t.subtitle) artistaFinal = t.subtitle;
+            else if (t.track && t.track.artists) artistaFinal = t.track.artists.map(a => a.name).join(', ');
+
+            // --- CAZAMOS EL TÍTULO ---
+            let tituloFinal = t.name || t.title || (t.track ? t.track.name : 'Pista Desconocida');
+
+            // --- INTENTO 1: PORTADA DE SPOTIFY ---
+            let portadaFinal = null;
+            if (t.track && t.track.album && t.track.album.images && t.track.album.images.length > 0) portadaFinal = t.track.album.images[0].url;
+            else if (t.album && t.album.images && t.album.images.length > 0) portadaFinal = t.album.images[0].url;
+            else if (t.coverArt && t.coverArt.sources && t.coverArt.sources.length > 0) portadaFinal = t.coverArt.sources[0].url;
+
+            // --- INTENTO 2: API PÚBLICA DE iTUNES (El Respaldo Mágico) ---
+            // Si Spotify nos bloqueó la imagen, le preguntamos a Apple Music
+            if (!portadaFinal) {
+                try {
+                    const terminoBusqueda = encodeURIComponent(`${tituloFinal} ${artistaFinal}`);
+                    const itunesRes = await axios.get(`https://itunes.apple.com/search?term=${terminoBusqueda}&entity=song&limit=1`);
+                    
+                    if (itunesRes.data.results && itunesRes.data.results.length > 0) {
+                        // iTunes nos da la foto a 100x100 píxeles. 
+                        // Truco de desarrollador: Cambiamos el texto de la URL a 600x600 para que nos la dé en HD
+                        portadaFinal = itunesRes.data.results[0].artworkUrl100.replace('100x100bb', '600x600bb');
+                    } else {
+                        portadaFinal = 'https://via.placeholder.com/150'; // La gris por defecto si nada funciona
+                    }
+                } catch (error) {
+                    portadaFinal = 'https://via.placeholder.com/150';
+                }
+            }
+
+            return {
+                titulo: tituloFinal,
+                artista: artistaFinal,
+                portada: portadaFinal
+            };
+        }));
+
+        res.json(canciones);
+    } catch (error) {
+        console.error('Error leyendo Spotify:', error.message);
+        res.status(500).json({ error: 'No se pudo leer la playlist. Asegúrate de que es pública.' });
+    }
 });

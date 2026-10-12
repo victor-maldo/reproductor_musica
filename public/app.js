@@ -283,3 +283,100 @@ async function eliminarCancion(event, id) {
         console.error("Error de conexión al eliminar", error);
     }
 }
+
+// --- FUNCIONES DE SPOTIFY CORREGIDAS ---
+
+// 1. Abre nuestra ventana visual
+function importarSpotify() {
+    document.getElementById('spotify-modal').classList.add('show');
+    document.getElementById('spotify-input').value = ''; // Limpiamos el texto anterior
+}
+
+// 2. Cierra la ventana si le damos a Cancelar
+function cerrarSpotifyModal() {
+    document.getElementById('spotify-modal').classList.remove('show');
+}
+
+// 3. Procesa el enlace cuando le damos a "Importar"
+async function procesarSpotifyUrl() {
+    const url = document.getElementById('spotify-input').value;
+    cerrarSpotifyModal(); // Cerramos la ventanita
+
+    if (!url || !url.includes('spotify')) {
+        alert("Por favor, introduce un enlace válido de Spotify.");
+        return;
+    }
+
+    document.getElementById('loading-search').style.display = 'block';
+    document.getElementById('loading-search').innerText = 'Extrayendo canciones de Spotify... (puede tardar unos segundos)';
+    
+    const grid = document.getElementById('resultados-busqueda');
+    grid.innerHTML = '';
+
+    try {
+        const res = await fetch(`${URL_API_LOCAL}/spotify?url=${encodeURIComponent(url)}`);
+        if (!res.ok) throw new Error("Error en el servidor");
+        const canciones = await res.json();
+
+        document.getElementById('loading-search').style.display = 'none';
+
+        canciones.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <img src="${item.portada}" alt="Portada">
+                <h3>${item.titulo}</h3>
+                <p>${item.artista}</p>
+                <button class="btn-descargar" onclick="descargarMagico(event, '${item.titulo.replace(/'/g, "\\'")}', '${item.artista.replace(/'/g, "\\'")}', '${item.portada}')">
+                    Descargar
+                </button>
+            `;
+            grid.appendChild(card);
+        });
+    } catch (error) {
+        document.getElementById('loading-search').innerText = 'Error al leer la playlist. Verifica que el enlace sea público.';
+    }
+}
+
+// Esta función busca la canción en YouTube automáticamente antes de descargarla
+async function descargarMagico(event, titulo, artista, portada) {
+    const boton = event.target;
+    boton.innerText = "Buscando en YT...";
+    boton.disabled = true;
+
+    try {
+        // 1. Buscamos en secreto en YouTube usando nuestro servidor
+        const query = `${titulo} ${artista} official audio`;
+        const resBusqueda = await fetch(`${URL_API_LOCAL}/buscar?q=${encodeURIComponent(query)}`);
+        const videos = await resBusqueda.json();
+
+        if (videos.length === 0) {
+            boton.innerText = "No encontrada";
+            return;
+        }
+
+        // 2. Tomamos el primer video de los resultados de YouTube
+        const videoId = videos[0].videoId;
+        const duracion = videos[0].timestamp; 
+
+        boton.innerText = "Descargando...";
+
+        // 3. Mandamos a descargar físicamente (igual que una descarga normal)
+        const resDescarga = await fetch(`${URL_API_LOCAL}/descargar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId, titulo, artista, portada, duracion })
+        });
+
+        if (resDescarga.ok) {
+            boton.innerText = "¡Descargada!";
+            boton.style.backgroundColor = "#28a745";
+            actualizarAlmacenamiento();
+        } else {
+            boton.innerText = "Error";
+            boton.style.backgroundColor = "#dc3545";
+        }
+    } catch (error) {
+        boton.innerText = "Fallo de red";
+    }
+}

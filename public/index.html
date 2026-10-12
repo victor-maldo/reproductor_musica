@@ -37,6 +37,11 @@
                 <div class="search-header">
                     <input type="text" id="input-busqueda" placeholder="¿Qué quieres escuchar?">
                     <button onclick="buscarCancion()"><i class="fa-solid fa-magnifying-glass"></i></button>
+                    
+                    <!-- NUEVO BOTÓN DE SPOTIFY -->
+                    <button onclick="importarSpotify()" style="background-color: #1db954; color: white; margin-left: 10px;" title="Importar lista de Spotify">
+                        <i class="fa-brands fa-spotify"></i> Importar Playlist
+                    </button>
                 </div>
                 <div id="loading-search" style="display:none;">Buscando en la red...</div>
                 <div class="resultados-grid" id="resultados-busqueda">
@@ -84,7 +89,19 @@
             <input type="range" id="volume-bar" value="100" min="0" max="100" oninput="cambiarVolumen()">
         </div>
     </footer>
-
+<!-- Modal de Spotify (Oculto por defecto) -->
+    <div id="spotify-modal" class="modal">
+        <div class="modal-content">
+            <h3><i class="fa-brands fa-spotify" style="color: #1db954;"></i> Importar de Spotify</h3>
+            <p>Pega el enlace de tu Playlist pública de Spotify:</p>
+            <input type="text" id="spotify-input" placeholder="https://open.spotify.com/playlist/...">
+            <div class="modal-buttons">
+                <button onclick="cerrarSpotifyModal()">Cancelar</button>
+                <button onclick="procesarSpotifyUrl()" class="btn-verde">Importar</button>
+            </div>
+        </div>
+    </div>
     <script src="app.js"></script>
+
 </body>
 </html>
