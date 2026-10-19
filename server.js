@@ -8,7 +8,7 @@ const fsPromises = require('fs').promises; // Para calcular el tamaño de los di
 const ytSearch = require('yt-search');
 const { exec } = require('child_process');
 const fetch = require('isomorphic-unfetch');
-const { getTracks } = require('spotify-url-info')(fetch);
+const { getTracks, getData } = require('spotify-url-info')(fetch);
 
 const app = express();
 const PORT = 3000;
@@ -21,22 +21,59 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Servir la música para que el HTML pueda reproducirla
 app.use('/musica', express.static(path.join(__dirname, 'datos', 'descargas')));
 
-// Configuración de la base de datos
-const dbPath = path.join(__dirname, 'datos', 'canciones.db');
+// --- CONFIGURACIÓN BASE DE DATOS (SQLite) ---
+
+// 1. Definimos las rutas
+const dirDatos = path.join(__dirname, 'datos');
+const dirDescargas = path.join(__dirname, 'datos', 'descargas');
+
+// 2. Si no existen, las creamos automáticamente
+if (!fs.existsSync(dirDatos)) {
+    fs.mkdirSync(dirDatos);
+    console.log('Carpeta "datos" creada automáticamente.');
+}
+if (!fs.existsSync(dirDescargas)) {
+    fs.mkdirSync(dirDescargas);
+    console.log('Carpeta "descargas" creada automáticamente.');
+}
+
+// 3. Conectamos la base de datos (y preparamos el ecosistema de Playlists)
+const dbPath = path.join(dirDatos, 'canciones.db');
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error al conectar con SQLite:', err.message);
     } else {
         console.log('Conectado a la base de datos local SQLite.');
-        db.run(`CREATE TABLE IF NOT EXISTS canciones (
-            id TEXT PRIMARY KEY,
-            titulo TEXT,
-            artista TEXT,
-            duracion TEXT,
-            portada TEXT,
-            archivo TEXT,
-            fecha_descarga DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
+        
+        // Usamos serialize para que cree las tablas una detrás de otra sin atropellarse
+        db.serialize(() => {
+            // Tabla 1: Tu música (La que ya tenías)
+            db.run(`CREATE TABLE IF NOT EXISTS canciones (
+                id TEXT PRIMARY KEY,
+                titulo TEXT,
+                artista TEXT,
+                duracion TEXT,
+                portada TEXT,
+                archivo TEXT,
+                fecha_descarga DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Tabla 2: Los datos generales de las Playlists
+            db.run(`CREATE TABLE IF NOT EXISTS playlists (
+                id TEXT PRIMARY KEY,
+                nombre TEXT,
+                portada TEXT,
+                fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Tabla 3: El "puente" que une cada playlist con sus canciones y el orden
+            db.run(`CREATE TABLE IF NOT EXISTS playlist_canciones (
+                playlist_id TEXT,
+                cancion_id TEXT,
+                orden INTEGER,
+                PRIMARY KEY (playlist_id, cancion_id)
+            )`);
+        });
     }
 });
 
@@ -174,6 +211,15 @@ app.get('/api/abrir-carpeta', (req, res) => {
     });
 });
 
+// --- RUTA 8: OBTENER MIS PLAYLISTS GUARDADAS ---
+app.get('/api/playlists', (req, res) => {
+    db.all('SELECT * FROM playlists ORDER BY fecha_creacion DESC', [], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Error al leer las playlists' });
+        res.json(rows);
+    });
+});
+
+
 app.listen(PORT, () => {
     console.log(`Servidor interno corriendo en http://localhost:${PORT}`);
 });
@@ -208,6 +254,7 @@ app.delete('/api/canciones/:id', (req, res) => {
 });
 
 // --- RUTA 7: LEER PLAYLIST DE SPOTIFY (Con Respaldo de Apple Music) ---
+// --- RUTA 7: LEER PLAYLIST DE SPOTIFY (Con Nombre Real y Respaldo) ---
 app.get('/api/spotify', async (req, res) => {
     const url = req.query.url;
     if (!url) return res.status(400).json({ error: 'Falta la URL de Spotify' });
@@ -215,41 +262,39 @@ app.get('/api/spotify', async (req, res) => {
     try {
         console.log(`Leyendo playlist de Spotify: ${url}`);
         
-        // 1. Extraemos el texto básico de la playlist
-        const tracks = await getTracks(url);
+        // 1. Extraemos los datos generales (para el nombre) y las pistas simultáneamente
+        const [datosGenerales, tracks] = await Promise.all([
+            getData(url).catch(() => ({ name: 'Playlist de Spotify' })),
+            getTracks(url)
+        ]);
 
-        // 2. Procesamos todas las canciones a la vez usando Promise.all
+        // Guardamos el nombre oficial de la lista
+        const nombreLista = datosGenerales.name || datosGenerales.title || 'Playlist de Spotify';
+
+        // 2. Procesamos todas las canciones
         const canciones = await Promise.all(tracks.map(async (t) => {
             
-            // --- CAZAMOS EL ARTISTA ---
             let artistaFinal = 'Desconocido';
             if (typeof t.artist === 'string') artistaFinal = t.artist;
             else if (t.artists && Array.isArray(t.artists)) artistaFinal = t.artists.map(a => a.name).join(', ');
             else if (t.subtitle) artistaFinal = t.subtitle;
             else if (t.track && t.track.artists) artistaFinal = t.track.artists.map(a => a.name).join(', ');
 
-            // --- CAZAMOS EL TÍTULO ---
             let tituloFinal = t.name || t.title || (t.track ? t.track.name : 'Pista Desconocida');
 
-            // --- INTENTO 1: PORTADA DE SPOTIFY ---
             let portadaFinal = null;
             if (t.track && t.track.album && t.track.album.images && t.track.album.images.length > 0) portadaFinal = t.track.album.images[0].url;
             else if (t.album && t.album.images && t.album.images.length > 0) portadaFinal = t.album.images[0].url;
             else if (t.coverArt && t.coverArt.sources && t.coverArt.sources.length > 0) portadaFinal = t.coverArt.sources[0].url;
 
-            // --- INTENTO 2: API PÚBLICA DE iTUNES (El Respaldo Mágico) ---
-            // Si Spotify nos bloqueó la imagen, le preguntamos a Apple Music
             if (!portadaFinal) {
                 try {
                     const terminoBusqueda = encodeURIComponent(`${tituloFinal} ${artistaFinal}`);
                     const itunesRes = await axios.get(`https://itunes.apple.com/search?term=${terminoBusqueda}&entity=song&limit=1`);
-                    
                     if (itunesRes.data.results && itunesRes.data.results.length > 0) {
-                        // iTunes nos da la foto a 100x100 píxeles. 
-                        // Truco de desarrollador: Cambiamos el texto de la URL a 600x600 para que nos la dé en HD
                         portadaFinal = itunesRes.data.results[0].artworkUrl100.replace('100x100bb', '600x600bb');
                     } else {
-                        portadaFinal = 'https://via.placeholder.com/150'; // La gris por defecto si nada funciona
+                        portadaFinal = 'https://via.placeholder.com/150';
                     }
                 } catch (error) {
                     portadaFinal = 'https://via.placeholder.com/150';
@@ -263,9 +308,57 @@ app.get('/api/spotify', async (req, res) => {
             };
         }));
 
-        res.json(canciones);
+        // 3. Devolvemos el Nombre y las Canciones juntos
+        res.json({
+            nombreLista: nombreLista,
+            canciones: canciones
+        });
     } catch (error) {
         console.error('Error leyendo Spotify:', error.message);
         res.status(500).json({ error: 'No se pudo leer la playlist. Asegúrate de que es pública.' });
     }
+});
+
+// --- RUTA 9: CREAR PLAYLIST NUEVA ---
+app.post('/api/playlists', (req, res) => {
+    const { id, nombre, portada } = req.body;
+    db.run(`INSERT OR REPLACE INTO playlists (id, nombre, portada) VALUES (?, ?, ?)`,
+        [id, nombre, portada], (err) => {
+            if (err) return res.status(500).json({ error: 'Error guardando playlist' });
+            res.json({ mensaje: 'Playlist creada con éxito' });
+        });
+});
+
+// --- RUTA 10: VINCULAR CANCIÓN A UNA PLAYLIST ---
+app.post('/api/playlists/:id/canciones', (req, res) => {
+    const playlistId = req.params.id;
+    const { cancionId, orden } = req.body;
+    db.run(`INSERT OR REPLACE INTO playlist_canciones (playlist_id, cancion_id, orden) VALUES (?, ?, ?)`,
+        [playlistId, cancionId, orden], (err) => {
+            if (err) return res.status(500).json({ error: 'Error vinculando canción' });
+            res.json({ mensaje: 'Canción vinculada' });
+        });
+});
+
+// --- RUTA 11: ELIMINAR PLAYLIST (Sin borrar las canciones físicas) ---
+app.delete('/api/playlists/:id', (req, res) => {
+    const playlistId = req.params.id;
+
+    // 1. Primero borramos los vínculos que unen esta lista con sus canciones
+    db.run('DELETE FROM playlist_canciones WHERE playlist_id = ?', [playlistId], (err) => {
+        if (err) {
+            console.error('Error borrando vínculos de la playlist:', err.message);
+            return res.status(500).json({ error: 'Error al limpiar la playlist' });
+        }
+
+        // 2. Luego borramos la playlist en sí misma
+        db.run('DELETE FROM playlists WHERE id = ?', [playlistId], (err) => {
+            if (err) {
+                console.error('Error borrando la playlist:', err.message);
+                return res.status(500).json({ error: 'Error al borrar la playlist' });
+            }
+            console.log(`Playlist eliminada: ${playlistId}`);
+            res.json({ mensaje: 'Playlist eliminada correctamente' });
+        });
+    });
 });

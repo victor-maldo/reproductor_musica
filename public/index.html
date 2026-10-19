@@ -16,6 +16,7 @@
             <nav>
                 <button onclick="mostrarVista('buscar')" class="nav-btn active"><i class="fa-solid fa-magnifying-glass"></i> Buscar</button>
                 <button onclick="mostrarVista('biblioteca')" class="nav-btn"><i class="fa-solid fa-book"></i> Tu Biblioteca</button>
+                <button onclick="mostrarVista('playlists'); cargarPlaylists()" id="nav-playlists"><i class="fa-solid fa-list-music"></i>Mis Playlists</button>
             </nav>
 
             <!-- Monitor de Almacenamiento -->
@@ -59,6 +60,19 @@
                     <!-- Las canciones guardadas aparecerán aquí -->
                 </div>
             </section>
+            <!-- Vista: Mis Playlists -->
+            <section id="vista-playlists" class="vista" style="display: none;">
+                <div class="search-header" style="justify-content: space-between;">
+                    <h2>Mis Playlists Guardadas</h2>
+                    <!-- Este botón nos servirá en el futuro para crear listas vacías manualmente -->
+                    <button style="background-color: transparent; border: 1px solid white; color: white; padding: 8px 15px; border-radius: 20px; cursor: pointer;">
+                        + Nueva Playlist
+                    </button>
+                </div>
+                <div class="resultados-grid" id="lista-playlists-guardadas">
+                    <!-- Las carátulas gigantes de las Playlists aparecerán aquí -->
+                </div>
+            </section>
         </main>
     </div>
 
@@ -89,7 +103,7 @@
             <input type="range" id="volume-bar" value="100" min="0" max="100" oninput="cambiarVolumen()">
         </div>
     </footer>
-<!-- Modal de Spotify (Oculto por defecto) -->
+<!-- Modal de Spotify -->
     <div id="spotify-modal" class="modal">
         <div class="modal-content">
             <h3><i class="fa-brands fa-spotify" style="color: #1db954;"></i> Importar de Spotify</h3>
