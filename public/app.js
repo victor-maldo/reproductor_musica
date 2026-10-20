@@ -13,6 +13,7 @@ function mostrarVista(vista) {
     document.getElementById('vista-buscar').style.display = vista === 'buscar' ? 'block' : 'none';
     document.getElementById('vista-biblioteca').style.display = vista === 'biblioteca' ? 'block' : 'none';
     document.getElementById('vista-playlists').style.display = vista === 'playlists' ? 'block' : 'none';
+    document.getElementById('vista-interior-playlist').style.display = vista === 'interior-playlist' ? 'block' : 'none';
     
     if (vista === 'biblioteca') cargarBiblioteca();
 }
@@ -45,12 +46,16 @@ async function buscarCancion() {
     grid.innerHTML = '';
 
     try {
+        // 1. Buscamos en la red
         const res = await fetch(`${URL_API_LOCAL}/buscar?q=${encodeURIComponent(query)}`);
         
-        // Si el servidor da error, paramos aquí para evitar que salte el TypeError de la consola
         if (!res.ok) throw new Error("Error en la conexión con el servidor");
-        
         const videos = await res.json();
+        
+        // 2. NUEVO: Pedimos nuestra biblioteca para comparar qué tenemos ya
+        const resBiblio = await fetch(`${URL_API_LOCAL}/canciones`);
+        const bibliotecaLocal = await resBiblio.json();
+
         document.getElementById('loading-search').style.display = 'none';
 
         if (videos.length === 0) {
@@ -59,17 +64,50 @@ async function buscarCancion() {
         }
 
         videos.forEach(item => {
+            // Comprobamos si la canción de YouTube coincide (por ID de vídeo o por título exacto) con algo de tu disco duro
+            const cancionLocal = bibliotecaLocal.find(local => local.id === item.videoId || local.titulo.toLowerCase() === item.title.toLowerCase());
+            const yaDescargada = !!cancionLocal; // True si existe, False si no existe
+
             const card = document.createElement('div');
             card.className = 'card';
-            // yt-search nos da los nombres de las variables así: item.videoId, item.title, item.author.name
+            
+            // Limpiamos caracteres raros (como comillas simples o dobles) para no romper el código HTML
+            const tituloLimpio = item.title.replace(/['"]/g, "");
+            const artistaLimpio = item.author.name.replace(/['"]/g, "");
+
+            // Preparamos el HTML del check verde si ya la tenemos
+            const iconoCheck = yaDescargada 
+                ? `<div style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; z-index: 5;">
+                       <i class="fa-solid fa-check" style="color: #1db954;"></i>
+                   </div>` 
+                : '';
+
+            // Dibujamos la tarjeta (sin el botón todavía)
             card.innerHTML = `
+                ${iconoCheck}
                 <img src="${item.image}" alt="Portada">
                 <h3>${item.title}</h3>
                 <p>${item.author.name}</p>
-                <button class="btn-descargar" onclick="descargar('${item.videoId}', '${item.title.replace(/'/g, "")}', '${item.author.name.replace(/'/g, "")}', '${item.image}', '${item.timestamp}')">
-                    Descargar
-                </button>
             `;
+
+            // Creamos el botón de forma inteligente
+            const btn = document.createElement('button');
+            btn.className = 'btn-descargar';
+            
+            if (yaDescargada) {
+                // SI YA LA TIENES: El botón se vuelve verde y sirve para escucharla
+                btn.innerHTML = '<i class="fa-solid fa-play"></i> Reproducir';
+                btn.style.backgroundColor = '#1db954';
+                btn.style.cursor = 'pointer';
+                // Usamos la función nativa que ya tenías para reproducir música
+                btn.onclick = () => reproducir(cancionLocal);
+            } else {
+                // SI NO LA TIENES: Se queda tu botón de "Descargar" normal
+                btn.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
+                btn.setAttribute('onclick', `descargar('${item.videoId}', '${tituloLimpio}', '${artistaLimpio}', '${item.image}', '${item.timestamp}')`);
+            }
+
+            card.appendChild(btn);
             grid.appendChild(card);
         });
     } catch (error) {
@@ -314,6 +352,12 @@ async function procesarSpotifyUrl() {
         return;
     }
 
+    // NUEVO 1: Extraemos el ID original de Spotify desde la URL.
+    // Ej: https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M -> Sacamos "37i9dQZF1DXcBWIGoYBM5M"
+    const matchId = url.match(/playlist\/([a-zA-Z0-9]+)/);
+    // Si por algún motivo la URL es rara, caemos en el Date.now() como seguro de vida
+    playlistActualId = matchId ? `spotify_${matchId[1]}` : 'pl_' + Date.now();
+
     document.getElementById('loading-search').style.display = 'block';
     document.getElementById('loading-search').innerText = 'Analizando Playlist de Spotify...';
     
@@ -326,19 +370,35 @@ async function procesarSpotifyUrl() {
         const datosSpotify = await res.json(); 
         
         const canciones = datosSpotify.canciones;
-        const nombrePlaylist = datosSpotify.nombreLista; // ¡Ahora sí usamos el nombre original!
+        const nombrePlaylist = datosSpotify.nombreLista; 
+
+        // Descargamos TODAS nuestras listas guardadas para comprobar si ya existe
+        const resPlaylists = await fetch(`${URL_API_LOCAL}/playlists`);
+        const misPlaylistsGuardadas = await resPlaylists.json();
+        
+        // Comprobamos si el ID de Spotify ya está en nuestra base de datos
+        let playlistGuardadaEnBD = misPlaylistsGuardadas.some(pl => pl.id === playlistActualId);
 
         const resBiblio = await fetch(`${URL_API_LOCAL}/canciones`);
         const bibliotecaLocal = await resBiblio.json();
 
         document.getElementById('loading-search').style.display = 'none';
 
-        playlistActualId = 'pl_' + Date.now(); 
         const portadaPlaylist = canciones[0].portada; 
 
-        // 1. DIBUJAMOS LA CABECERA CON EL NUEVO BOTÓN
+        // 1. DIBUJAMOS LA CABECERA (Con el corazón condicionado)
         const headerDiv = document.createElement('div');
         headerDiv.style.cssText = "grid-column: 1/-1; display: flex; gap: 20px; background: #282828; padding: 20px; border-radius: 10px; align-items: center; margin-bottom: 20px;";
+        
+        // NUEVO 2: HTML del botón de guardar que cambia según si ya la tenemos
+        const botonGuardarHTML = playlistGuardadaEnBD 
+            ? `<button id="btn-gestor-guardar" disabled style="padding: 12px 24px; font-size: 16px; cursor: default; border: 1px solid #1db954; border-radius: 25px; background: transparent; color: white; font-weight: bold;">
+                 <i class="fa-solid fa-heart" style="color: #1db954;"></i> Guardada en Playlists
+               </button>`
+            : `<button id="btn-gestor-guardar" style="padding: 12px 24px; font-size: 16px; cursor: pointer; border: 1px solid white; border-radius: 25px; background: transparent; color: white; font-weight: bold; transition: 0.2s;">
+                 <i class="fa-regular fa-heart"></i> Guardar en Mis Playlists
+               </button>`;
+
         headerDiv.innerHTML = `
             <img src="${portadaPlaylist}" style="width: 150px; height: 150px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
             <div>
@@ -350,10 +410,7 @@ async function procesarSpotifyUrl() {
                     <button id="btn-gestor-play" class="btn-verde" style="padding: 12px 24px; font-size: 16px; cursor: pointer; border: none; border-radius: 25px; background: #1db954; color: white; font-weight: bold; transition: 0.2s;">
                         <i class="fa-solid fa-play"></i> Iniciar Descarga
                     </button>
-                    <!-- NUEVO BOTÓN: GUARDAR EN MI BIBLIOTECA -->
-                    <button id="btn-gestor-guardar" style="padding: 12px 24px; font-size: 16px; cursor: pointer; border: 1px solid white; border-radius: 25px; background: transparent; color: white; font-weight: bold; transition: 0.2s;">
-                        <i class="fa-regular fa-heart"></i> Guardar en Mis Playlists
-                    </button>
+                    ${botonGuardarHTML}
                     <button id="btn-gestor-cancelar" style="display: none; padding: 12px 24px; font-size: 16px; cursor: pointer; border: none; border-radius: 25px; background: transparent; border: 1px solid #dc3545; color: #dc3545; font-weight: bold; transition: 0.2s;">
                         <i class="fa-solid fa-stop"></i> Cancelar
                     </button>
@@ -369,83 +426,89 @@ async function procesarSpotifyUrl() {
 
         // 2. PREPARAMOS LA COLA 
         colaDescarga = []; 
-        let playlistGuardadaEnBD = false; // Variable para saber si ya la guardamos
         
         canciones.forEach((c, index) => {
             const cancionLocal = bibliotecaLocal.find(local => local.titulo.toLowerCase() === c.titulo.toLowerCase());
             const yaDescargada = !!cancionLocal;
+            
+            const idUnico = 'song_' + index;
 
             colaDescarga.push({
                 ...c,
-                idInterno: 'song_' + index,
+                idInterno: idUnico,
                 estado: yaDescargada ? 'ya_descargada' : 'pendiente',
-                videoIdExistente: yaDescargada ? cancionLocal.id : null
+                videoIdExistente: yaDescargada ? cancionLocal.id : null,
+                prioridad: false 
             });
 
             const card = document.createElement('div');
             card.className = 'card';
-            card.id = `card-${colaDescarga[colaDescarga.length-1].idInterno}`;
+            card.id = `card-${idUnico}`;
             
             if (!yaDescargada) {
                 card.title = "Haz clic para priorizar esta canción";
-                card.onclick = () => priorizarCancion(colaDescarga[colaDescarga.length-1].idInterno);
+                card.onclick = () => priorizarCancion(idUnico);
             }
 
             const iconHtml = yaDescargada ? '<i class="fa-solid fa-check" style="color: #1db954;"></i>' : '<i class="fa-solid fa-clock" style="color: #b3b3b3;"></i>';
             const imgOpacity = yaDescargada ? '1' : '0.5';
 
             card.innerHTML = `
-                <div id="icon-${colaDescarga[colaDescarga.length-1].idInterno}" style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; z-index: 5;">
+                <div id="icon-${idUnico}" style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; z-index: 5;">
                     ${iconHtml}
                 </div>
-                <img src="${c.portada}" alt="Portada" style="opacity: ${imgOpacity};" id="img-${colaDescarga[colaDescarga.length-1].idInterno}">
+                <img src="${c.portada}" alt="Portada" style="opacity: ${imgOpacity};" id="img-${idUnico}">
                 <h3>${c.titulo}</h3>
                 <p>${c.artista}</p>
             `;
             cancionesGrid.appendChild(card);
         });
 
-        // 3. LA LÓGICA DE GUARDAR MANUALMENTE
+        // 3. LA LÓGICA DE LOS BOTONES
         const btnPlay = document.getElementById('btn-gestor-play');
         const btnGuardar = document.getElementById('btn-gestor-guardar');
         const btnCancelar = document.getElementById('btn-gestor-cancelar');
 
-        // Función que registra la Playlist oficial en la Base de Datos
         async function asegurarPlaylistGuardada() {
             if (playlistGuardadaEnBD) return;
             
-            // Creamos la carpeta virtual de la playlist
+            // Preparamos TODAS las canciones (las descargadas y las que no) para enviarlas
+            const pistasParaGuardar = colaDescarga.map(c => ({
+                titulo: c.titulo,
+                artista: c.artista,
+                portada: c.portada
+            }));
+
+            // Enviamos todo en un solo paquete
             await fetch(`${URL_API_LOCAL}/playlists`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: playlistActualId, nombre: nombrePlaylist, portada: portadaPlaylist })
+                body: JSON.stringify({ 
+                    id: playlistActualId, 
+                    nombre: nombrePlaylist, 
+                    portada: portadaPlaylist,
+                    pistas: pistasParaGuardar // ¡Aquí viaja el plano entero!
+                })
             });
 
-            // Y vinculamos las canciones que ya tuviéramos de antes
-            for(let i = 0; i < colaDescarga.length; i++) {
-                if (colaDescarga[i].estado === 'ya_descargada') {
-                    await fetch(`${URL_API_LOCAL}/playlists/${playlistActualId}/canciones`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ cancionId: colaDescarga[i].videoIdExistente, orden: i })
-                    });
-                    colaDescarga[i].estado = 'completada'; 
-                }
-            }
+            // Hemos eliminado el bucle 'for' que había aquí porque el servidor ya hace la magia solo
 
-            cargarPlaylists(); // Refrescamos el menú lateral
+            cargarPlaylists(); 
             playlistGuardadaEnBD = true;
             
-            // Cambiamos el aspecto del botón a "Guardado"
-            btnGuardar.innerHTML = `<i class="fa-solid fa-heart" style="color: #1db954;"></i> Guardada en Playlists`;
-            btnGuardar.style.borderColor = "#1db954";
-            btnGuardar.disabled = true;
+            if (btnGuardar) {
+                btnGuardar.innerHTML = `<i class="fa-solid fa-heart" style="color: #1db954;"></i> Guardada en Playlists`;
+                btnGuardar.style.borderColor = "#1db954";
+                btnGuardar.disabled = true;
+                btnGuardar.style.cursor = "default";
+            }
         }
 
-        // Si el usuario hace clic en Guardar de forma manual
-        btnGuardar.onclick = asegurarPlaylistGuardada;
+        // Si el botón no está deshabilitado de fábrica, le ponemos el evento
+        if (!playlistGuardadaEnBD) {
+            btnGuardar.onclick = asegurarPlaylistGuardada;
+        }
 
-        // 4. LÓGICA DEL MOTOR DE DESCARGA
         btnPlay.onclick = async () => {
             if (descargando && !pausaDescarga) {
                 pausaDescarga = true;
@@ -455,7 +518,6 @@ async function procesarSpotifyUrl() {
             } else {
                 if (!descargando) {
                     btnPlay.disabled = true; 
-                    // Si inicias la descarga, asumimos que quieres guardar la lista automáticamente
                     await asegurarPlaylistGuardada(); 
                     btnPlay.disabled = false;
                 }
@@ -482,6 +544,7 @@ async function procesarSpotifyUrl() {
 
     } catch (error) {
         document.getElementById('loading-search').innerText = 'Error al leer la playlist. Verifica que el enlace sea público.';
+        console.error(error);
     }
 }
 // Esta función busca la canción en YouTube automáticamente antes de descargarla
@@ -575,8 +638,13 @@ async function cargarPlaylists() {
 // --- MOTOR DEL GESTOR DE DESCARGAS ---
 
 async function procesarColaDescarga() {
-    // Buscamos la siguiente canción pendiente en la lista
-    let indexActual = colaDescarga.findIndex(c => c.estado === 'pendiente');
+    // 1. NUEVO: Buscamos primero si hay alguna canción con "Pase VIP" (priorizada manualmente)
+    let indexActual = colaDescarga.findIndex(c => c.estado === 'pendiente' && c.prioridad === true);
+    
+    // 2. Si no hay ninguna priorizada, seguimos el orden cronológico normal (la primera pendiente)
+    if (indexActual === -1) {
+        indexActual = colaDescarga.findIndex(c => c.estado === 'pendiente');
+    }
     
     // Si no hay más pendientes, hemos terminado
     if (indexActual === -1) {
@@ -597,11 +665,10 @@ async function procesarColaDescarga() {
     
     document.getElementById('gestor-estado').innerText = `Descargando: ${c.titulo}...`;
     document.getElementById(`icon-${c.idInterno}`).innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color: #ffc107;"></i>';
-    document.getElementById(`img-${c.idInterno}`).style.opacity = '1'; // Iluminamos la portada
+    document.getElementById(`img-${c.idInterno}`).style.opacity = '1'; 
     document.getElementById(`card-${c.idInterno}`).style.borderColor = "#ffc107";
 
     try {
-        // 1. Buscar
         const resBusqueda = await fetch(`${URL_API_LOCAL}/buscar?q=${encodeURIComponent(c.titulo + ' ' + c.artista + ' official audio')}`);
         const videos = await resBusqueda.json();
         
@@ -609,14 +676,13 @@ async function procesarColaDescarga() {
             const videoId = videos[0].videoId;
             const duracion = videos[0].timestamp;
             
-            // 2. Descargar
             await fetch(`${URL_API_LOCAL}/descargar`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ videoId, titulo: c.titulo, artista: c.artista, portada: c.portada, duracion })
             });
 
-            // 3. Vincular a la Playlist
+            // Como NO hemos movido la canción de su sitio, indexActual sigue siendo su orden original de Spotify
             await fetch(`${URL_API_LOCAL}/playlists/${playlistActualId}/canciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -625,58 +691,145 @@ async function procesarColaDescarga() {
             
             actualizarAlmacenamiento();
             
-            // 4. Éxito visual (Icono de check verde)
             c.estado = 'completada';
             document.getElementById(`icon-${c.idInterno}`).innerHTML = '<i class="fa-solid fa-check" style="color: #1db954;"></i>';
             document.getElementById(`card-${c.idInterno}`).style.borderColor = "transparent";
-            document.getElementById(`card-${c.idInterno}`).onclick = null; // Ya no se puede priorizar
+            document.getElementById(`card-${c.idInterno}`).onclick = null; 
         } else {
             throw new Error("No encontrada en YT");
         }
     } catch (err) {
-        // Error visual (Icono de cruz roja)
         c.estado = 'error';
         document.getElementById(`icon-${c.idInterno}`).innerHTML = '<i class="fa-solid fa-xmark" style="color: #dc3545;"></i>';
         document.getElementById(`card-${c.idInterno}`).style.borderColor = "transparent";
         console.error(`Error con ${c.titulo}:`, err);
     }
 
-    // Al terminar con esta canción, el motor se vuelve a llamar a sí mismo (recursividad)
-    // para seguir con la siguiente si no está en pausa.
+    // El motor vuelve a llamarse a sí mismo
     procesarColaDescarga();
 }
 
-// Función para cuando el usuario hace CLIC en una tarjeta pendiente
+// --- Función para priorizar SIN romper el orden visual ni la base de datos ---
+// --- Función para priorizar o desmarcar (Interruptor) ---
 function priorizarCancion(idInterno) {
-    // Solo podemos priorizar si hay canciones pendientes
-    const index = colaDescarga.findIndex(c => c.idInterno === idInterno);
-    if (index === -1 || colaDescarga[index].estado !== 'pendiente') return;
-
-    // Buscamos cuál es el primer hueco disponible de las "pendientes"
-    const primerPendienteIndex = colaDescarga.findIndex(c => c.estado === 'pendiente');
+    const cancion = colaDescarga.find(c => c.idInterno === idInterno);
     
-    if (index > primerPendienteIndex) {
-        // Cortamos la canción de su sitio y la pegamos al principio de la cola
-        const cancion = colaDescarga.splice(index, 1)[0];
-        colaDescarga.splice(primerPendienteIndex, 0, cancion);
-        
-        // Reordenamos visualmente el panel de HTML para que suba arriba
-        const grid = document.getElementById('grid-gestor-canciones');
-        const tarjetaHtml = document.getElementById(`card-${idInterno}`);
-        // La insertamos justo antes de la que era la "primera pendiente"
-        grid.insertBefore(tarjetaHtml, grid.children[primerPendienteIndex]);
-        
-        // Un pequeño efecto visual para que el usuario vea que ha funcionado
-        tarjetaHtml.style.transform = "scale(1.05)";
-        setTimeout(() => tarjetaHtml.style.transform = "scale(1)", 200);
+    // Solo podemos interactuar si está pendiente
+    if (!cancion || cancion.estado !== 'pendiente') return;
+
+    const tarjetaHtml = document.getElementById(`card-${idInterno}`);
+    const iconoDiv = document.getElementById(`icon-${idInterno}`);
+
+    // Alternamos el estado de prioridad (Toggle)
+    if (cancion.prioridad) {
+        // SI YA ERA VIP: Se lo quitamos y volvemos al estado normal
+        cancion.prioridad = false;
+        tarjetaHtml.style.borderColor = "transparent"; // Quitamos el borde
+        iconoDiv.innerHTML = '<i class="fa-solid fa-clock" style="color: #b3b3b3;"></i>'; // Vuelve el reloj gris
+    } else {
+        // SI NO ERA VIP: Se lo ponemos
+        cancion.prioridad = true;
+        tarjetaHtml.style.borderColor = "#1db954"; // Borde verde
+        iconoDiv.innerHTML = '<i class="fa-solid fa-star" style="color: #1db954;"></i>'; // Estrella verde
     }
+    
+    // Pequeño bote visual para que notes el clic en ambos casos
+    tarjetaHtml.style.transform = "scale(1.05)";
+    setTimeout(() => tarjetaHtml.style.transform = "scale(1)", 200);
 }
 // Llamada inicial para cargar las listas guardadas al abrir la app
 cargarPlaylists();
 
-// Función temporal para que las tarjetas no den error al hacerles clic
-function abrirInteriorPlaylist(id) {
-    console.log("Próximamente abriremos la playlist con ID:", id);
+// --- VISTA INTERIOR DE LA PLAYLIST ---
+async function abrirInteriorPlaylist(id) {
+    // 1. Cambiamos a la nueva pantalla
+    mostrarVista('interior-playlist');
+    
+    const cabecera = document.getElementById('cabecera-interior-playlist');
+    const grid = document.getElementById('lista-interior-playlist');
+    
+    cabecera.innerHTML = 'Cargando playlist...';
+    grid.innerHTML = '';
+
+    try {
+        // 2. Pedimos los datos completos de esta lista al servidor
+        const res = await fetch(`${URL_API_LOCAL}/playlists/${id}/completa`);
+        const playlistCompleta = await res.json();
+
+        // 3. Dibujamos la cabecera estilo Spotify
+        cabecera.style.cssText = "display: flex; gap: 20px; background: #282828; padding: 20px; border-radius: 10px; align-items: center;";
+        cabecera.innerHTML = `
+            <img src="${playlistCompleta.portada}" style="width: 150px; height: 150px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+            <div>
+                <p style="color: #b3b3b3; text-transform: uppercase; font-size: 12px; font-weight: bold;">Playlist Local</p>
+                <h2 style="margin-bottom: 10px; font-size: 2.5em;">${playlistCompleta.nombre}</h2>
+                <p style="color: #b3b3b3; margin-bottom: 15px;">${playlistCompleta.canciones.length} canciones guardadas</p>
+                <button class="btn-verde" style="padding: 12px 24px; font-size: 16px; cursor: pointer; border: none; border-radius: 25px; background: #1db954; color: white; font-weight: bold; transition: 0.2s;" onclick="reproducirPlaylistCompleta()">
+                    <i class="fa-solid fa-play"></i> Reproducir desde el principio
+                </button>
+            </div>
+        `;
+
+        // 4. Dibujamos las canciones una por una
+        if (playlistCompleta.canciones.length === 0) {
+            grid.innerHTML = '<p style="grid-column: 1/-1; color: #b3b3b3;">No hay canciones descargadas en esta lista todavía.</p>';
+            return;
+        }
+
+        playlistCompleta.canciones.forEach(cancion => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            
+            // ¿Tenemos archivo físico de esta canción en nuestro disco duro?
+            const yaDescargada = cancion.archivo != null;
+
+            // Limpiamos los textos por si llevan comillas raras
+            const tituloLimpio = cancion.titulo.replace(/['"]/g, "");
+            const artistaLimpio = cancion.artista.replace(/['"]/g, "");
+
+            // El botón cambia según si la tenemos o no
+            let botonHtml = '';
+            let iconoEsquina = '';
+
+            if (yaDescargada) {
+                // SI ESTÁ DESCARGADA: Clic reproduce la canción
+                card.onclick = () => reproducir(cancion);
+                iconoEsquina = `<div style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; z-index: 5;">
+                                    <i class="fa-solid fa-check" style="color: #1db954;"></i>
+                                </div>`;
+                botonHtml = `<button class="btn-descargar" style="background-color: #1db954; color: white;" onclick="event.stopPropagation(); reproducir({titulo: '${tituloLimpio}', artista: '${artistaLimpio}', portada: '${cancion.portada}', archivo: '${cancion.archivo}'})">
+                                <i class="fa-solid fa-play"></i> Reproducir
+                             </button>`;
+            } else {
+                // SI NO ESTÁ DESCARGADA: El botón inicia la búsqueda y descarga
+                iconoEsquina = `<div style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; z-index: 5;">
+                                    <i class="fa-solid fa-clock" style="color: #b3b3b3;"></i>
+                                </div>`;
+                botonHtml = `<button class="btn-descargar" style="background-color: transparent; border: 1px solid white; color: white;" onclick="descargarMagico(event, '${tituloLimpio}', '${artistaLimpio}', '${cancion.portada}')">
+                                <i class="fa-solid fa-download"></i> Descargar
+                             </button>`;
+                card.style.opacity = "0.7"; // La ponemos un poco transparente para que se note que falta
+            }
+
+            card.innerHTML = `
+                ${iconoEsquina}
+                <img src="${cancion.portada}" alt="Portada">
+                <h3 style="margin-top: 10px;">${cancion.titulo}</h3>
+                <p>${cancion.artista}</p>
+                ${botonHtml}
+            `;
+            grid.appendChild(card);
+        });
+
+    } catch (error) {
+        cabecera.innerHTML = '<h3 style="color: #dc3545;">Error cargando la playlist.</h3>';
+        console.error(error);
+    }
+}
+
+// Función vacía para prepararnos para el siguiente paso
+function reproducirPlaylistCompleta() {
+    alert("Próximamente: ¡El botón verde reproducirá toda la lista en orden!");
 }
 
 // --- FUNCION PARA BORRAR PLAYLISTS ---

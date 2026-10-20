@@ -73,6 +73,15 @@ const db = new sqlite3.Database(dbPath, (err) => {
                 orden INTEGER,
                 PRIMARY KEY (playlist_id, cancion_id)
             )`);
+            // Tabla 4: El "Plano Original" de las canciones de una playlist
+            db.run(`CREATE TABLE IF NOT EXISTS playlist_tracks (
+                id TEXT PRIMARY KEY,
+                playlist_id TEXT,
+                titulo TEXT,
+                artista TEXT,
+                portada TEXT,
+                orden INTEGER
+            )`);
         });
     }
 });
@@ -319,13 +328,24 @@ app.get('/api/spotify', async (req, res) => {
     }
 });
 
-// --- RUTA 9: CREAR PLAYLIST NUEVA ---
+// --- RUTA 9: CREAR PLAYLIST NUEVA (Con su plano completo) ---
 app.post('/api/playlists', (req, res) => {
-    const { id, nombre, portada } = req.body;
+    const { id, nombre, portada, pistas } = req.body;
+    
     db.run(`INSERT OR REPLACE INTO playlists (id, nombre, portada) VALUES (?, ?, ?)`,
         [id, nombre, portada], (err) => {
             if (err) return res.status(500).json({ error: 'Error guardando playlist' });
-            res.json({ mensaje: 'Playlist creada con éxito' });
+            
+            // Si nos envían las pistas de Spotify, las guardamos de golpe
+            if (pistas && pistas.length > 0) {
+                const stmt = db.prepare(`INSERT OR REPLACE INTO playlist_tracks (id, playlist_id, titulo, artista, portada, orden) VALUES (?, ?, ?, ?, ?, ?)`);
+                pistas.forEach((p, index) => {
+                    // Generamos un ID único para la fila combinando la playlist y su posición
+                    stmt.run([`${id}_${index}`, id, p.titulo, p.artista, p.portada, index]);
+                });
+                stmt.finalize();
+            }
+            res.json({ mensaje: 'Playlist guardada con éxito' });
         });
 });
 
@@ -340,25 +360,39 @@ app.post('/api/playlists/:id/canciones', (req, res) => {
         });
 });
 
-// --- RUTA 11: ELIMINAR PLAYLIST (Sin borrar las canciones físicas) ---
+// --- RUTA 11: ELIMINAR PLAYLIST (Limpieza total) ---
 app.delete('/api/playlists/:id', (req, res) => {
     const playlistId = req.params.id;
+    // Borramos los vínculos antiguos
+    db.run('DELETE FROM playlist_canciones WHERE playlist_id = ?', [playlistId]);
+    // Borramos el plano original
+    db.run('DELETE FROM playlist_tracks WHERE playlist_id = ?', [playlistId]);
+    // Borramos la playlist
+    db.run('DELETE FROM playlists WHERE id = ?', [playlistId], (err) => {
+        if (err) return res.status(500).json({ error: 'Error al borrar la playlist' });
+        res.json({ mensaje: 'Playlist eliminada correctamente' });
+    });
+});
 
-    // 1. Primero borramos los vínculos que unen esta lista con sus canciones
-    db.run('DELETE FROM playlist_canciones WHERE playlist_id = ?', [playlistId], (err) => {
-        if (err) {
-            console.error('Error borrando vínculos de la playlist:', err.message);
-            return res.status(500).json({ error: 'Error al limpiar la playlist' });
-        }
+// --- RUTA 12: OBTENER EL INTERIOR DE UNA PLAYLIST (Magia Pura) ---
+app.get('/api/playlists/:id/completa', (req, res) => {
+    const playlistId = req.params.id;
 
-        // 2. Luego borramos la playlist en sí misma
-        db.run('DELETE FROM playlists WHERE id = ?', [playlistId], (err) => {
-            if (err) {
-                console.error('Error borrando la playlist:', err.message);
-                return res.status(500).json({ error: 'Error al borrar la playlist' });
-            }
-            console.log(`Playlist eliminada: ${playlistId}`);
-            res.json({ mensaje: 'Playlist eliminada correctamente' });
+    db.get('SELECT * FROM playlists WHERE id = ?', [playlistId], (err, playlist) => {
+        if (err || !playlist) return res.status(404).json({ error: 'Playlist no encontrada' });
+
+        // MAGIA: Traemos todas las canciones del "plano" y miramos si existen físicamente en 'canciones'
+        const sqlCanciones = `
+            SELECT pt.*, c.archivo, c.id as video_id
+            FROM playlist_tracks pt
+            LEFT JOIN canciones c ON (LOWER(pt.titulo) = LOWER(c.titulo) AND LOWER(pt.artista) = LOWER(c.artista))
+            WHERE pt.playlist_id = ? 
+            ORDER BY pt.orden ASC
+        `;
+        
+        db.all(sqlCanciones, [playlistId], (err, canciones) => {
+            if (err) return res.status(500).json({ error: 'Error cargando las canciones' });
+            res.json({ ...playlist, canciones: canciones });
         });
     });
 });
