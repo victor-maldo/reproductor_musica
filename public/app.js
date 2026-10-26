@@ -6,6 +6,7 @@ let bibliotecaActual = []; // Guarda las canciones en memoria para filtrarlas r�
 window.onload = () => {
     actualizarAlmacenamiento();
     cargarBiblioteca();
+    cargarEstadoReproductor();
 };
 
 // --- NAVEGACIÓN ---
@@ -238,6 +239,7 @@ function reproducir(cancion, forzarInicioCola = true) {
         alert("Esta canción aún no está descargada. ¡Lo programaremos en la Fase 3!");
         siguienteCancion(); // Saltamos a la siguiente por ahora
     }
+    guardarEstadoReproductor();
 }
 
 // Saltar a la siguiente canción
@@ -285,6 +287,7 @@ function togglePlay() {
         audio.pause();
         document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-circle-play fa-2x"></i>';
     }
+    guardarEstadoReproductor();
 }
 
 function togglePlay() {
@@ -342,6 +345,7 @@ function cambiarVolumen() {
     if (vol == 0) icono.className = 'fa-solid fa-volume-xmark';
     else if (vol < 50) icono.className = 'fa-solid fa-volume-low';
     else icono.className = 'fa-solid fa-volume-high';
+    guardarEstadoReproductor();
 }
 // --- FUNCIONES PARA ELIMINAR CANCIONES ---
 
@@ -905,22 +909,22 @@ async function abrirInteriorPlaylist(id) {
     }
 }
 
-// Carga toda la lista en el reproductor de golpe
+// --- Carga toda la lista en el reproductor de golpe ---
 function reproducirPlaylistCompleta() {
-    // Buscamos los datos de la lista en la pantalla actual
-    fetch(`${URL_API_LOCAL}/playlists/${playlistActualId}/completa`)
-        .then(res => res.json())
-        .then(playlistCompleta => {
-            if (playlistCompleta.canciones.length === 0) return;
+    // Como la función abrirInteriorPlaylist ya guardó las canciones en contextoActual, 
+    // no necesitamos volver a pedírselas al servidor. ¡Es instantáneo!
+    
+    if (contextoActual.length === 0) {
+        alert("No hay canciones en esta vista para reproducir.");
+        return;
+    }
 
-            // Cargamos todas las canciones de la playlist en nuestra cola
-            colaReproduccion = playlistCompleta.canciones;
-            indiceActual = 0; // Empezamos por la pista 1 (índice 0)
-            
-            // Empezamos a reproducir la primera sin borrar la cola (forzarInicioCola = false)
-            reproducir(colaReproduccion[indiceActual], false);
-        })
-        .catch(err => console.error("Error al cargar la playlist para reproducir", err));
+    // Cargamos todas las canciones de la pantalla actual en nuestra cola
+    colaReproduccion = [...contextoActual];
+    indiceActual = 0; // Empezamos por la pista 1 (índice 0)
+    
+    // Empezamos a reproducir la primera sin borrar la cola
+    reproducir(colaReproduccion[indiceActual], false);
 }
 
 // --- FUNCION PARA BORRAR PLAYLISTS ---
@@ -942,3 +946,68 @@ async function eliminarPlaylist(event, id) {
         console.error("Error de conexión al eliminar", error);
     }
 }
+
+// --- MEMORIA DE SESIÓN (LocalStorage) ---
+
+function guardarEstadoReproductor() {
+    const estado = {
+        cola: colaReproduccion,
+        indice: indiceActual,
+        volumen: document.getElementById('volume-bar').value,
+        tiempo: audio.currentTime || 0 // Guardamos el segundo exacto
+    };
+    localStorage.setItem('miniSpotifyEstado', JSON.stringify(estado));
+}
+
+function cargarEstadoReproductor() {
+    const estadoGuardado = localStorage.getItem('miniSpotifyEstado');
+    
+    if (estadoGuardado) {
+        try {
+            const estado = JSON.parse(estadoGuardado);
+            
+            // 1. Restauramos el Volumen
+            if (estado.volumen !== undefined) {
+                document.getElementById('volume-bar').value = estado.volumen;
+                audio.volume = estado.volumen / 100;
+                
+                const icono = document.getElementById('icon-vol');
+                if (estado.volumen == 0) icono.className = 'fa-solid fa-volume-xmark';
+                else if (estado.volumen < 50) icono.className = 'fa-solid fa-volume-low';
+                else icono.className = 'fa-solid fa-volume-high';
+            }
+
+            // 2. Restauramos la Cola y la Canción
+            if (estado.cola && estado.cola.length > 0 && estado.indice >= 0) {
+                colaReproduccion = estado.cola;
+                indiceActual = estado.indice;
+                
+                const cancion = colaReproduccion[indiceActual];
+                
+                // Pintamos la interfaz
+                document.getElementById('player-title').innerText = cancion.titulo;
+                document.getElementById('player-artist').innerText = cancion.artista;
+                document.getElementById('player-cover').src = cancion.portada;
+                
+                if (cancion.archivo) {
+                    audio.src = `http://localhost:3000/musica/${cancion.archivo}`;
+                    
+                    // IMPORTANTE: Hay que esperar a que el archivo cargue un poco antes de saltar al minuto en el que estábamos
+                    audio.addEventListener('loadedmetadata', function onLoaded() {
+                        audio.currentTime = estado.tiempo || 0;
+                        actualizarBarraTiempo();
+                        audio.removeEventListener('loadedmetadata', onLoaded); // Limpiamos el evento
+                    });
+                }
+                
+                // Lo dejamos en pausa (no asustamos al usuario poniendo música de golpe al abrir)
+                document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-circle-play fa-2x"></i>';
+            }
+        } catch (e) {
+            console.error("Error cargando la memoria del reproductor", e);
+        }
+    }
+}
+
+// 3. Guardamos el segundo exacto JUSTO antes de que el usuario cierre o recargue la aplicación
+window.addEventListener('beforeunload', guardarEstadoReproductor);
