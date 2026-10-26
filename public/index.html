@@ -101,7 +101,18 @@
         
         <div class="player-center">
             <div class="player-controls">
-                <button onclick="togglePlay()" id="btn-play"><i class="fa-solid fa-circle-play fa-2x"></i></button>
+                <button onclick="cancionAnterior()" id="btn-prev" title="Anterior">
+                    <i class="fa-solid fa-backward-step fa-lg"></i>
+                </button>
+                
+                <button onclick="togglePlay()" id="btn-play" title="Reproducir/Pausar">
+                    <i class="fa-solid fa-circle-play fa-2x"></i>
+                </button>
+                
+                <button onclick="siguienteCancion()" id="btn-next" title="Siguiente">
+                    <i class="fa-solid fa-forward-step fa-lg"></i>
+                </button>
+                
                 <audio id="audio-player" ontimeupdate="actualizarBarraTiempo()" onended="siguienteCancion()"></audio>
             </div>
             <div class="player-progress">

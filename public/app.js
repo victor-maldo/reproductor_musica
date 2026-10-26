@@ -164,11 +164,11 @@ function renderizarBiblioteca(lista) {
         grid.innerHTML = '<p style="grid-column: 1/-1;">No hay canciones que coincidan.</p>';
         return;
     }
-
-    lista.forEach(cancion => {
+    contextoActual = lista; // Guardamos la lista que se está mostrando en pantalla para el reproductor contextual
+    lista.forEach((cancion, index) => {
         const card = document.createElement('div');
         card.className = 'card';
-        card.onclick = () => reproducir(cancion); // Clic normal reproduce la canción
+        card.onclick = () => reproducirDesdeContexto(index); // Clic normal reproduce la canción
         
         // CUIDADO AQUÍ: Hemos inyectado el botón de puntitos y el menú rojo
         card.innerHTML = `
@@ -202,15 +202,89 @@ function filtrarBiblioteca() {
 }
 
 // --- REPRODUCTOR AUDIO ---
-function reproducir(cancion) {
+// --- VARIABLES DE LA COLA DE REPRODUCCIÓN ---
+let colaReproduccion = []; // Aquí meteremos la lista de canciones a sonar
+let indiceActual = -1;     // Saber por qué número de la cola vamos
+let contextoActual = [];   // Guardamos la lista de canciones que se están mostrando en pantalla
+
+// NUEVA FUNCIÓN: Reproducir respetando el contexto (tus vecinas de lista)
+function reproducirDesdeContexto(index) {
+    // 1. Copiamos TODAS las canciones de la pantalla actual a la cola
+    colaReproduccion = [...contextoActual];
+    // 2. Le decimos al reproductor que empiece en la posición que has clicado
+    indiceActual = index;
+    // 3. Le damos al Play (el 'false' evita que se vuelva a borrar la cola)
+    reproducir(colaReproduccion[indiceActual], false);
+}
+// Esta es la función maestra que le da al Play
+function reproducir(cancion, forzarInicioCola = true) {
+    // Si hacemos clic en una canción suelta, creamos una cola nueva de 1 sola canción
+    if (forzarInicioCola) {
+        colaReproduccion = [cancion];
+        indiceActual = 0;
+    }
+
     document.getElementById('player-title').innerText = cancion.titulo;
     document.getElementById('player-artist').innerText = cancion.artista;
     document.getElementById('player-cover').src = cancion.portada;
     
-    // Le decimos al audio tag dónde está el archivo físico (nuestro puerto 3000 sirve la carpeta)
-    audio.src = `http://localhost:3000/musica/${cancion.archivo}`;
-    audio.play();
-    document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-circle-pause fa-2x"></i>';
+    // Si la canción ya la tenemos en el disco duro, la ponemos. 
+    // (En la Fase 3, aquí meteremos la lógica de descargar si no la tenemos)
+    if (cancion.archivo) {
+        audio.src = `http://localhost:3000/musica/${cancion.archivo}`;
+        audio.play();
+        document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-circle-pause fa-2x"></i>';
+    } else {
+        alert("Esta canción aún no está descargada. ¡Lo programaremos en la Fase 3!");
+        siguienteCancion(); // Saltamos a la siguiente por ahora
+    }
+}
+
+// Saltar a la siguiente canción
+function siguienteCancion() {
+    if (colaReproduccion.length === 0) return;
+    
+    indiceActual++;
+    
+    // Si hemos llegado al final de la cola
+    if (indiceActual >= colaReproduccion.length) {
+        indiceActual = -1;
+        colaReproduccion = [];
+        audio.src = "";
+        document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-circle-play fa-2x"></i>';
+        document.getElementById('player-title').innerText = "Fin de la lista";
+        document.getElementById('player-artist').innerText = "-";
+        return;
+    }
+
+    // Reproducimos la siguiente (le pasamos false para que no borre la cola actual)
+    reproducir(colaReproduccion[indiceActual], false);
+}
+
+// Volver a la canción anterior
+function cancionAnterior() {
+    // Si la canción lleva más de 3 segundos sonando, al darle a anterior simplemente la reinicia (como Spotify)
+    if (audio.currentTime > 3) {
+        audio.currentTime = 0;
+        audio.play();
+        return;
+    }
+
+    if (colaReproduccion.length === 0 || indiceActual <= 0) return;
+    
+    indiceActual--;
+    reproducir(colaReproduccion[indiceActual], false);
+}
+
+function togglePlay() {
+    if (!audio.src) return;
+    if (audio.paused) {
+        audio.play();
+        document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-circle-pause fa-2x"></i>';
+    } else {
+        audio.pause();
+        document.getElementById('btn-play').innerHTML = '<i class="fa-solid fa-circle-play fa-2x"></i>';
+    }
 }
 
 function togglePlay() {
@@ -776,39 +850,43 @@ async function abrirInteriorPlaylist(id) {
             return;
         }
 
-        playlistCompleta.canciones.forEach(cancion => {
+        // GUARDAMOS EL CONTEXTO: Le decimos a la memoria global qué lista estamos viendo
+        contextoActual = playlistCompleta.canciones;
+
+        // Fíjate: Hemos añadido "index" al forEach para saber la posición (0, 1, 2...)
+        playlistCompleta.canciones.forEach((cancion, index) => {
             const card = document.createElement('div');
             card.className = 'card';
             
-            // ¿Tenemos archivo físico de esta canción en nuestro disco duro?
             const yaDescargada = cancion.archivo != null;
 
-            // Limpiamos los textos por si llevan comillas raras
             const tituloLimpio = cancion.titulo.replace(/['"]/g, "");
             const artistaLimpio = cancion.artista.replace(/['"]/g, "");
 
-            // El botón cambia según si la tenemos o no
             let botonHtml = '';
             let iconoEsquina = '';
 
             if (yaDescargada) {
-                // SI ESTÁ DESCARGADA: Clic reproduce la canción
-                card.onclick = () => reproducir(cancion);
+                // LA MAGIA ESTÁ AQUÍ: Ahora al hacer clic le pasamos la posición exacta
+                card.onclick = () => reproducirDesdeContexto(index);
+                
                 iconoEsquina = `<div style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; z-index: 5;">
                                     <i class="fa-solid fa-check" style="color: #1db954;"></i>
                                 </div>`;
-                botonHtml = `<button class="btn-descargar" style="background-color: #1db954; color: white;" onclick="event.stopPropagation(); reproducir({titulo: '${tituloLimpio}', artista: '${artistaLimpio}', portada: '${cancion.portada}', archivo: '${cancion.archivo}'})">
+                
+                // El botón verde también usa el contexto y el index
+                botonHtml = `<button class="btn-descargar" style="background-color: #1db954; color: white;" onclick="event.stopPropagation(); reproducirDesdeContexto(${index})">
                                 <i class="fa-solid fa-play"></i> Reproducir
                              </button>`;
             } else {
-                // SI NO ESTÁ DESCARGADA: El botón inicia la búsqueda y descarga
+                // Si no está descargada, se queda igual
                 iconoEsquina = `<div style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; z-index: 5;">
                                     <i class="fa-solid fa-clock" style="color: #b3b3b3;"></i>
                                 </div>`;
                 botonHtml = `<button class="btn-descargar" style="background-color: transparent; border: 1px solid white; color: white;" onclick="descargarMagico(event, '${tituloLimpio}', '${artistaLimpio}', '${cancion.portada}')">
                                 <i class="fa-solid fa-download"></i> Descargar
                              </button>`;
-                card.style.opacity = "0.7"; // La ponemos un poco transparente para que se note que falta
+                card.style.opacity = "0.7"; 
             }
 
             card.innerHTML = `
@@ -827,9 +905,22 @@ async function abrirInteriorPlaylist(id) {
     }
 }
 
-// Función vacía para prepararnos para el siguiente paso
+// Carga toda la lista en el reproductor de golpe
 function reproducirPlaylistCompleta() {
-    alert("Próximamente: ¡El botón verde reproducirá toda la lista en orden!");
+    // Buscamos los datos de la lista en la pantalla actual
+    fetch(`${URL_API_LOCAL}/playlists/${playlistActualId}/completa`)
+        .then(res => res.json())
+        .then(playlistCompleta => {
+            if (playlistCompleta.canciones.length === 0) return;
+
+            // Cargamos todas las canciones de la playlist en nuestra cola
+            colaReproduccion = playlistCompleta.canciones;
+            indiceActual = 0; // Empezamos por la pista 1 (índice 0)
+            
+            // Empezamos a reproducir la primera sin borrar la cola (forzarInicioCola = false)
+            reproducir(colaReproduccion[indiceActual], false);
+        })
+        .catch(err => console.error("Error al cargar la playlist para reproducir", err));
 }
 
 // --- FUNCION PARA BORRAR PLAYLISTS ---

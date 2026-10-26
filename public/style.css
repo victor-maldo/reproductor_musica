@@ -389,3 +389,44 @@ body {
 
 .modal-buttons button:hover { opacity: 0.8; }
 .modal-buttons .btn-verde { background-color: #1db954; color: white; }
+
+/* --- CONTROLES DEL REPRODUCTOR INFERIOR --- */
+
+/* Forzamos la fila horizontal y el centrado */
+.player-controls {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+}
+
+/* Reseteamos el estilo base de los botones de control */
+.player-controls button {
+    background: transparent;
+    border: none;
+    color: #b3b3b3;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    display: inline-flex; /* Asegura que el icono no rompa el botón */
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s ease, transform 0.1s ease;
+}
+
+/* Efecto hover profesional (se iluminan en blanco al pasar el ratón) */
+.player-controls button:hover {
+    color: #ffffff;
+    transform: scale(1.1);
+}
+
+/* El botón de play destaca siempre en blanco */
+#btn-play {
+    color: #ffffff;
+}
+
+/* Ocultamos por completo la etiqueta de audio nativa */
+#audio-player {
+    display: none;
+}
