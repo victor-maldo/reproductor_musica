@@ -1,0 +1,12 @@
+# Librerías de Node (se generan solas con npm install)
+node_modules/
+
+# Archivos ejecutables pesados
+*.exe
+ffmpeg.exe
+yt-dlp.exe
+
+# Base de datos local y música descargada (no queremos subir las canciones de prueba a GitHub)
+datos/descargas/
+datos/canciones.db
+*.m4a
